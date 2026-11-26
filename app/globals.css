@@ -21,3 +21,30 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei",
     Arial, sans-serif;
 }
+
+/* 刘看山的几种轻微动效：呼吸、开心跳动、疑惑歪头 */
+@keyframes idle {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-3px) scale(1.01); }
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  30%      { transform: translateY(-8px) rotate(-2deg); }
+  60%      { transform: translateY(-3px) rotate(2deg); }
+}
+
+@keyframes tilt {
+  0%, 100% { transform: rotate(0deg); }
+  40%      { transform: rotate(-6deg); }
+  70%      { transform: rotate(4deg); }
+}
+
+/* 尊重用户的"减少动效"偏好 */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
