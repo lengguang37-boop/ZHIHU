@@ -1,26 +1,23 @@
 @import "tailwindcss";
 
+/*
+ * 固定为浅色主题。
+ * 原模板会根据系统深色模式把 --background 变黑、--foreground 变浅灰，
+ * 导致写死 bg-white 的组件出现"白底白字"。比赛期间先锁定浅色。
+ */
 :root {
-  --background: #ffffff;
+  --background: #fafafa;
   --foreground: #171717;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei",
+    Arial, sans-serif;
 }
