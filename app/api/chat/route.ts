@@ -1,3 +1,6 @@
+// Vercel: 允许函数运行更久，推理模型通常需要 10-20 秒
+export const maxDuration = 60
+
 const PLANNER_PROMPT = `你是一个任务规划器，只输出一张 Markdown 表格，不输出任何其他文字。
 
 严格格式（4 列，表头必须完全一致）：
@@ -12,16 +15,7 @@ const PLANNER_PROMPT = `你是一个任务规划器，只输出一张 Markdown �
 4. 「为什么这步重要」写新手在这一步最容易踩的坑，20-40 字。
 5. 不要使用 markdown 标题、列表、加粗。`
 
-type Task = {
-  id: number
-  title: string
-  estimate: string
-  why: string
-  done: boolean
-}
-
-/** 通用模型通道：环境变量齐全时启用 */
-function useCustomModel() {
+function hasCustomModel() {
   return Boolean(
     process.env.MODEL_BASE_URL &&
       process.env.MODEL_API_KEY &&
@@ -29,117 +23,42 @@ function useCustomModel() {
   )
 }
 
-/** 调通用模型（OpenAI 兼容格式） */
-async function callCustomModel(goal: string) {
-  const base = process.env.MODEL_BASE_URL!.replace(/\/+$/, '')
-  const url = base.endsWith('/chat/completions')
-    ? base
-    : `${base}/chat/completions`
+function buildRequest(goal: string) {
+  const useCustom = hasCustomModel()
 
-  return fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.MODEL_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: process.env.MODEL_NAME,
-      stream: false,
-      temperature: 0.3,
-      messages: [
-        { role: 'system', content: PLANNER_PROMPT },
-        { role: 'user', content: goal },
-      ],
-    }),
-  })
-}
+  const base = useCustom ? process.env.MODEL_BASE_URL!.replace(/\/+$/, '') : ''
+  const url = useCustom
+    ? base.endsWith('/chat/completions')
+      ? base
+      : `${base}/chat/completions`
+    : 'https://developer.zhihu.com/v1/chat/completions'
 
-/** 调知乎直答 */
-async function callZhihu(goal: string) {
-  return fetch('https://developer.zhihu.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.ZHIHU_ACCESS_SECRET}`,
-      'X-Request-Timestamp': String(Math.floor(Date.now() / 1000)),
-    },
-    body: JSON.stringify({
-      model: 'zhida-fast-1p5',
-      stream: false,
-      messages: [
-        { role: 'system', content: PLANNER_PROMPT },
-        { role: 'user', content: goal },
-      ],
-    }),
-  })
-}
-
-/** 优先解析表格 */
-function parseTable(md: string): Task[] {
-  const rows = md
-    .split('\n')
-    .filter((line) => line.trim().startsWith('|'))
-    .map((line) =>
-      line
-        .split('|')
-        .map((cell) => cell.trim())
-        .filter((cell) => cell.length > 0)
-    )
-    .filter((cols) => cols.length >= 3)
-    .filter((cols) => !/^[-:\s]+$/.test(cols[0]))
-    .filter((cols) => !/序号|任务|步骤/.test(cols[0]))
-
-  return rows.map((cols, index) => ({
-    id: index + 1,
-    title: cols[1] ?? cols[0],
-    estimate: cols[2] ?? '',
-    why: cols[3] ?? '',
-    done: false,
-  }))
-}
-
-/** 兜底：从列表项/编号行提取 */
-function parseFallback(md: string): Task[] {
-  const items: { title: string; meta: string }[] = []
-
-  for (const raw of md.split('\n')) {
-    const line = raw.trim()
-    if (!line) continue
-
-    const m = line.match(/^(?:[-*•]|\d+[.、)])\s+(.+)$/)
-    if (!m) continue
-
-    let text = m[1].replace(/\*\*/g, '').replace(/`/g, '').trim()
-    if (text.length < 4) continue
-
-    let meta = ''
-    const paren = text.match(/[（(]([^）)]*(?:小时|分钟|天|周)[^）)]*)[）)]/)
-    if (paren) {
-      meta = paren[1]
-      text = text.replace(paren[0], '').trim()
-    }
-
-    const parts = text.split(/\s*[—–]\s*|\s*：\s*|\s*:\s*/)
-    if (parts.length > 1) {
-      text = parts[0].trim()
-      if (!meta) meta = parts.slice(1).join(' ').trim()
-    }
-
-    if (text.length >= 4) items.push({ title: text, meta })
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (useCustom) {
+    headers['Authorization'] = `Bearer ${process.env.MODEL_API_KEY}`
+  } else {
+    headers['Authorization'] = `Bearer ${process.env.ZHIHU_ACCESS_SECRET}`
+    headers['X-Request-Timestamp'] = String(Math.floor(Date.now() / 1000))
   }
 
-  return items.slice(0, 8).map((it, index) => {
-    const isDuration = /^\s*\d+\s*[-–~]?\s*\d*\s*(小时|分钟|天|周|min|h)/.test(it.meta)
-    return {
-      id: index + 1,
-      title: it.title,
-      estimate: isDuration ? it.meta : '',
-      why: isDuration ? '' : it.meta,
-      done: false,
-    }
-  })
+  const messages = [
+    { role: 'system', content: PLANNER_PROMPT },
+    { role: 'user', content: goal },
+  ]
+
+  const body = useCustom
+    ? { model: process.env.MODEL_NAME, stream: true, temperature: 0.3, messages }
+    : { model: 'zhida-fast-1p5', stream: true, messages }
+
+  return { url, headers, body, source: useCustom ? 'custom' : 'zhihu' }
 }
 
+/**
+ * 流式返回规划结果。
+ *
+ * 先建立 ReadableStream 并立刻吐出占位字节，把 fetch 放进流内部异步执行，
+ * 确保响应头和首字节第一时间发出，避免平台的首字节超时限制。
+ */
 export async function POST(req: Request) {
   const { goal } = await req.json()
 
@@ -147,49 +66,63 @@ export async function POST(req: Request) {
     return Response.json({ error: '请先描述你的目标' }, { status: 400 })
   }
 
-  const viaCustom = useCustomModel()
-  let resp: Response
+  const encoder = new TextEncoder()
 
-  try {
-    resp = viaCustom ? await callCustomModel(goal) : await callZhihu(goal)
-  } catch (e) {
-    console.error('[plan] 调用模型失败:', e)
-    return Response.json({ error: '连不上模型服务，检查网络或密钥' }, { status: 500 })
-  }
+  const stream = new ReadableStream({
+    async start(controller) {
+      controller.enqueue(encoder.encode(': open\n\n'))
 
-  if (!resp.ok) {
-    const text = await resp.text()
-    console.error(`[plan] 上游错误 source=${viaCustom ? 'custom' : 'zhihu'} status=${resp.status}`, text.slice(0, 300))
+      const sendError = (msg: string) => {
+        const payload = JSON.stringify({ error: msg })
+        controller.enqueue(encoder.encode(`event: error\ndata: ${payload}\n\n`))
+      }
 
-    if (resp.status === 429) {
-      return Response.json({ error: '额度用完了，明天再来试试' }, { status: 429 })
-    }
-    if (resp.status === 401 || resp.status === 403) {
-      return Response.json({ error: '密钥无效，检查 .env.local 后重启服务' }, { status: 502 })
-    }
-    return Response.json({ error: '规划失败，请稍后再试' }, { status: 502 })
-  }
+      try {
+        const { url, headers, body, source } = buildRequest(goal)
 
-  const data = await resp.json()
-  const content: string = data.choices?.[0]?.message?.content ?? ''
+        const upstream = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        })
 
-  let tasks = parseTable(content)
-  let mode = 'table'
+        if (!upstream.ok || !upstream.body) {
+          const text = await upstream.text().catch(() => '')
+          console.error(
+            `[plan] 上游错误 source=${source} status=${upstream.status}`,
+            text.slice(0, 300)
+          )
 
-  if (tasks.length === 0) {
-    tasks = parseFallback(content)
-    mode = 'fallback'
-  }
+          if (upstream.status === 429) sendError('额度用完了，明天再来试试')
+          else if (upstream.status === 401 || upstream.status === 403)
+            sendError('密钥无效')
+          else sendError('规划失败，请稍后再试')
 
-  console.log(`[plan] source=${viaCustom ? 'custom' : 'zhihu'} mode=${mode} tasks=${tasks.length}`)
+          controller.close()
+          return
+        }
 
-  if (tasks.length === 0) {
-    console.error('[plan] 无法解析，原始输出:', content.slice(0, 800))
-    return Response.json(
-      { error: '没能整理出任务，换个说法试试', raw: content.slice(0, 1500) },
-      { status: 502 }
-    )
-  }
+        const reader = upstream.body.getReader()
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          controller.enqueue(value)
+        }
+      } catch (e) {
+        console.error('[plan] 流异常', e)
+        sendError('连不上模型服务')
+      } finally {
+        controller.close()
+      }
+    },
+  })
 
-  return Response.json({ tasks, mode })
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+      'Connection': 'keep-alive',
+    },
+  })
 }

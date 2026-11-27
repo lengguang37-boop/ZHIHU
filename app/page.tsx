@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Kanshan from '@/components/Kanshan'
 import { reactToToggle, greeting, type Reaction } from '@/lib/reactions'
+import { parsePlan, extractDelta, extractStreamError } from '@/lib/plan-parser'
 
 type Task = {
   id: number
@@ -28,6 +29,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [raw, setRaw] = useState('')
+  const [progress, setProgress] = useState(0)
   const [reaction, setReaction] = useState<Reaction | null>(null)
   const reactionTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -67,6 +69,7 @@ export default function Home() {
     setTasks([])
     setRefs({})
     setRefError({})
+    setProgress(0)
 
     try {
       const res = await fetch('/api/chat', {
@@ -75,24 +78,60 @@ export default function Home() {
         body: JSON.stringify({ goal }),
       })
 
-      const data = await res.json()
-
+      // 错误响应仍是 JSON
       if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
         setError(data.error ?? '生成失败')
-        setRaw(data.raw ?? '')
         return
       }
-      if (!data.tasks?.length) {
-        setError('这次没整理出任务')
-        setRaw(data.raw ?? '')
+      if (!res.body) {
+        setError('没有收到响应')
         return
       }
-      setTasks(data.tasks)
-      say(greeting(data.tasks.length))
+
+      // 流式接收：首字节很快到达，避免云函数超时
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let acc = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          const streamErr = extractStreamError(line)
+          if (streamErr) {
+            setError(streamErr)
+            return
+          }
+          const delta = extractDelta(line)
+          if (delta) {
+            acc += delta
+            setProgress(acc.length)
+          }
+        }
+      }
+
+      const parsed = parsePlan(acc)
+
+      if (parsed.length === 0) {
+        setError('这次没整理出任务，换个说法试试')
+        setRaw(acc.slice(0, 1500))
+        return
+      }
+
+      setTasks(parsed)
+      say(greeting(parsed.length))
     } catch {
       setError('网络好像断了，稍后再试')
     } finally {
       setLoading(false)
+      setProgress(0)
     }
   }
 
@@ -195,7 +234,7 @@ export default function Home() {
             onClick={generate}
             disabled={loading || !goal.trim()}
           >
-            {loading ? '规划中…' : '生成计划'}
+            {loading ? (progress > 0 ? '规划中 ' + progress + ' 字…' : '规划中…') : '生成计划'}
           </button>
         </div>
 

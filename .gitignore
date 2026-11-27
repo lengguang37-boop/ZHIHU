@@ -44,3 +44,7 @@ next-env.d.ts
 # deploy package
 *.zip
 *.tsbuildinfo
+
+# build output
+.cloudbase-next/
+_tmp/
