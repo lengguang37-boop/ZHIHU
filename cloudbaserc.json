@@ -1,0 +1,22 @@
+{
+  "version": "2.0",
+  "envId": "liukanshan-qgmzb-d8e3cj85b0c366f",
+  "functionRoot": "./",
+  "functions": [
+    {
+      "name": "kanshan-companion",
+      "type": "HTTP",
+      "runtime": "Nodejs20.19",
+      "memorySize": 512,
+      "timeout": 60,
+      "installDependency": false,
+      "handler": "index.main",
+      "envVariables": {
+        "ZHIHU_ACCESS_SECRET": "填入真实值，勿提交",
+        "MODEL_BASE_URL": "填入真实值，勿提交",
+        "MODEL_API_KEY": "填入真实值，勿提交",
+        "MODEL_NAME": "deepseek-v4.1-flash-1017"
+      }
+    }
+  ]
+}

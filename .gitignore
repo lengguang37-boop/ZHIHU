@@ -48,3 +48,6 @@ next-env.d.ts
 # build output
 .cloudbase-next/
 _tmp/
+
+# cloudbase local config with secrets
+cloudbaserc.local.json
